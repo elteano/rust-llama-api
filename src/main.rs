@@ -11,8 +11,10 @@ struct InputOptions
     file: Option<String>,
     #[arg(short, long, conflicts_with = "file")]
     prompt: bool,
+    #[arg(short, long, conflicts_with = "file")]
+    conv: bool,
     #[arg(short, long, default_value = "wizard-vicuna-uncensored:7b", help = "Name of the model to query", value_name = "MODEL:TAG")]
-    model: Option<String>
+    model: String
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -111,7 +113,6 @@ fn individual_request(request_object: &LlamaRequest) -> Result<String, String>
             Ok(buf.len())
         }).unwrap();
 
-        println!("Making request...");
         match transfer.perform()
         {
             Ok(_) => { () }
@@ -164,6 +165,72 @@ fn make_request(model_name: String, prompt: String) -> Result<String, String>
     return individual_request(&req);
 }
 
+/// Make multiple prompts to the destination model.
+fn request_loop(model_name: String)
+{
+    // Continuously update this object
+    let mut req = LlamaRequest {
+        model: model_name,
+        stream: false,
+        messages: Vec::new(),
+        options: None
+    };
+
+    loop
+    {
+        let mut prompt = String::new();
+
+        print!("[32m➤ [m");
+
+        std::io::stdout().flush().unwrap();
+
+        std::io::stdin().read_line(&mut prompt)
+            .expect("Expected user input but could not use STDIN.");
+
+        match prompt[..].trim() {
+            "#help" => { println!("Implemented commands are #exit / #quit, #system, and #reset.") }
+            "#exit" => { break }
+            "#quit" => { break }
+            "#reset" => {
+                req.messages = Vec::new();
+                println!("[33m⚠ Conversation history reset.[m");
+            }
+            "#system" => {
+                req.messages = Vec::new();
+                println!("[33m⚠ Conversation history reset.[m");
+                println!("Input the new system prompt.");
+                let mut new_system = String::new();
+                std::io::stdin().read_line(&mut new_system)
+                    .expect("Expected user input but could not use STDIN.");
+                req.messages.push(Message {
+                    role: "system".to_string(),
+                    content: new_system,
+                    ..Default::default()
+                });
+            }
+            _ => {
+                req.messages.push(Message {
+                    role: "user".to_string(),
+                    content: prompt,
+                    ..Default::default()
+                });
+
+                let resp = match individual_request(&req)
+                {
+                    Ok(m) => { m }
+                    Err(err) => { eprintln!("{err}"); return }
+                };
+                println!("{resp}");
+                req.messages.push(Message {
+                    role: "assistant".to_string(),
+                    content: resp.trim().to_string(),
+                    ..Default::default()
+                });
+            }
+        };
+    }
+}
+
 fn main()
 {
     let args = InputOptions::parse();
@@ -176,58 +243,59 @@ fn main()
                 "");
     */
 
-    let model_tag = match args.model
-    {
-        Some(s) => { s }
-        None => { "llama2:7b-chat".to_string() }
-    };
-
     let mut prompt = String::new();
 
-    if args.file.is_some()
+    if args.conv
     {
-        // we already verified that the 'f' option exists, so no need to check again
-        let fname = args.file.unwrap();
-        if fname == "-"
-        {
-            match std::io::stdin().read_to_string(&mut prompt)
-            {
-                Ok(_) => { () }
-                Err(err) => { eprintln!("Error reading stdin: {err}"); return }
-            };
-        }
-        else
-        {
-            // Currently assume the file exists
-            let mut fhandle = match File::open(&fname)
-            {
-                Ok(f) => { f }
-                Err(msg) => { 
-                    match msg.kind()
-                    {
-                        std::io::ErrorKind::NotFound => { eprintln!("File {fname} not found.") }
-                        _ => { eprintln!("{msg}") }
-                    };
-                    return }
-            };
-            fhandle.read_to_string(&mut prompt).unwrap();
-        }
-    }
-    else if args.prompt
-    {
-        print!("Enter your prompt on a single line:\n>");
-        std::io::stdout().flush().unwrap();
-        std::io::stdin().read_line(&mut prompt).expect("Expected user input but could not use STDIN.");
+        request_loop(args.model);
     }
     else
     {
-        eprintln!("--file or --prompt are required parameters.");
-        return;
-    }
+        if args.file.is_some()
+        {
+            // we already verified that the 'f' option exists, so no need to check again
+            let fname = args.file.unwrap();
+            if fname == "-"
+            {
+                match std::io::stdin().read_to_string(&mut prompt)
+                {
+                    Ok(_) => { () }
+                    Err(err) => { eprintln!("Error reading stdin: {err}"); return }
+                };
+            }
+            else
+            {
+                // Currently assume the file exists
+                let mut fhandle = match File::open(&fname)
+                {
+                    Ok(f) => { f }
+                    Err(msg) => { 
+                        match msg.kind()
+                        {
+                            std::io::ErrorKind::NotFound => { eprintln!("File {fname} not found.") }
+                            _ => { eprintln!("{msg}") }
+                        };
+                        return }
+                };
+                fhandle.read_to_string(&mut prompt).unwrap();
+            }
+        }
+        else if args.prompt
+        {
+            print!("Enter your prompt on a single line:\n>");
+            std::io::stdout().flush().unwrap();
+            std::io::stdin().read_line(&mut prompt).expect("Expected user input but could not use STDIN.");
+        }
+        else
+        {
+            eprintln!("--file or --prompt are required parameters.");
+            return;
+        }
 
-    match make_request(model_tag, prompt)
-    {
-        Ok(res) => { println!("{res}") }
-        Err(err) => { eprintln!("Error received: {err}"); return }
+        match make_request(args.model, prompt)
+        {
+            Ok(res) => { println!("{res}") }
+            Err(err) => { eprintln!("Error received: {err}"); return }
+        }
     }
 }
