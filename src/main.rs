@@ -2,6 +2,18 @@ use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{Read, Write};
 use curl::easy::Easy;
+use clap::Parser;
+
+#[derive(Parser)]
+struct InputOptions
+{
+    #[arg(short, long)]
+    file: Option<String>,
+    #[arg(short, long, conflicts_with = "file")]
+    prompt: bool,
+    #[arg(short, long, default_value = "llama2:7b-chat", help = "Name of the model to query", value_name = "MODEL:TAG")]
+    model: Option<String>
+}
 
 #[derive(Serialize, Deserialize, Default)]
 struct ModelOptions
@@ -149,25 +161,17 @@ fn make_request(model_name: String, prompt: String) -> Result<String, String>
 
 fn main()
 {
-    let args : Vec<String> = std::env::args().collect();
-    let mut opts : getopts::Options = Default::default();
+    let args = InputOptions::parse();
 
-    opts.optflag("h", "help", "Print a help message.");
-
+    /*
     opts.optopt("f", "file", "Read input from a specified file.", "FILE");
     opts.optflag("p", "prompt", "Prompt for user input.");
     opts.optopt("m", "model",
-                "Name of the model to query. Default llama2:7b-chat.",
-                "MODEL:TAG");
+,
+                "");
+    */
 
-    let matches = match opts.parse(&args[1..])
-    {
-        Ok(m) => { m }
-        // Hardly 'handling' the panic...
-        Err(f) => { panic!("{}", f.to_string()) }
-    };
-
-    let model_tag = match matches.opt_str("m")
+    let model_tag = match args.model
     {
         Some(s) => { s }
         None => { "llama2:7b-chat".to_string() }
@@ -175,10 +179,10 @@ fn main()
 
     let mut prompt = String::new();
 
-    if matches.opt_present("f")
+    if args.file.is_some()
     {
         // we already verified that the 'f' option exists, so no need to check again
-        let fname = matches.opt_str("f").unwrap();
+        let fname = args.file.unwrap();
         if fname == "-"
         {
             match std::io::stdin().read_to_string(&mut prompt)
@@ -204,7 +208,7 @@ fn main()
             fhandle.read_to_string(&mut prompt).unwrap();
         }
     }
-    else if matches.opt_present("p")
+    else if args.prompt
     {
         print!("Enter your prompt on a single line:\n>");
         std::io::stdout().flush().unwrap();
