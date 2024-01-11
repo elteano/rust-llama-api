@@ -11,7 +11,7 @@ struct InputOptions
     file: Option<String>,
     #[arg(short, long, conflicts_with = "file")]
     prompt: bool,
-    #[arg(short, long, default_value = "llama2:7b-chat", help = "Name of the model to query", value_name = "MODEL:TAG")]
+    #[arg(short, long, default_value = "wizard-vicuna-uncensored:7b", help = "Name of the model to query", value_name = "MODEL:TAG")]
     model: Option<String>
 }
 
