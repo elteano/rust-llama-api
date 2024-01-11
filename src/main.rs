@@ -89,26 +89,9 @@ struct ErrorResponse
     error: String
 }
 
-fn make_request(model_name: String, prompt: String) -> Result<String, String>
+fn individual_request(request_object: &LlamaRequest) -> Result<String, String>
 {
-    let mut req = LlamaRequest {
-        model: model_name,
-        stream: false,
-        messages: Vec::new(),
-        options: Some(ModelOptions {
-            temperature: Some(0.8),
-            ..Default::default()
-        })
-    };
-
-    req.messages.push(Message {
-        role: "user".to_string(),
-        content: prompt,
-        ..Default::default()
-    });
-
-    // Everything should be serializable so no error expected
-    let data = serde_json::to_string(&req).unwrap();
+    let data = serde_json::to_string(&request_object).unwrap();
 
     // Buffer to hold curl response data
     let mut buf = Vec::new();
@@ -156,7 +139,29 @@ fn make_request(model_name: String, prompt: String) -> Result<String, String>
         }
     };
 
+    // Everything should be serializable so no error expected
     return Ok(r.message.content);
+}
+
+fn make_request(model_name: String, prompt: String) -> Result<String, String>
+{
+    let mut req = LlamaRequest {
+        model: model_name,
+        stream: false,
+        messages: Vec::new(),
+        options: Some(ModelOptions {
+            temperature: Some(0.8),
+            ..Default::default()
+        })
+    };
+
+    req.messages.push(Message {
+        role: "user".to_string(),
+        content: prompt,
+        ..Default::default()
+    });
+
+    return individual_request(&req);
 }
 
 fn main()
