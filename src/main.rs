@@ -8,14 +8,16 @@ use clap::Parser;
 #[command(version, about)]
 struct InputOptions
 {
-    #[arg(short, long)]
+    #[arg(short, long, help = "Read entire prompt from a file and print the response")]
     file: Option<String>,
-    #[arg(short, long, conflicts_with = "file")]
+    #[arg(short, long, conflicts_with = "file", help = "Basic promping mode")]
     prompt: bool,
-    #[arg(short, long, conflicts_with = "file")]
+    #[arg(short, long, conflicts_with = "file", help = "Well-featured conversation mode")]
     conv: bool,
     #[arg(short, long, default_value = "llama2-uncensored:7b-chat", help = "Name of the model to query", value_name = "MODEL:TAG")]
-    model: String
+    model: String,
+    #[arg(short, long, default_value = "http://localhost:11434/api/chat", value_name = "URL")]
+    endpoint: String,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -92,7 +94,7 @@ struct ErrorResponse
     error: String
 }
 
-fn individual_request(request_object: &LlamaRequest) -> Result<String, String>
+fn individual_request(request_object: &LlamaRequest, endpoint: &str) -> Result<String, String>
 {
     let data = serde_json::to_string(&request_object).unwrap();
 
@@ -100,7 +102,7 @@ fn individual_request(request_object: &LlamaRequest) -> Result<String, String>
     let mut buf = Vec::new();
 
     let mut curl_easy = Easy::new();
-    curl_easy.url("http://localhost:11434/api/chat").unwrap();
+    curl_easy.url(endpoint).unwrap();
 
     curl_easy.read_function(move |into| {
         Ok(data.as_bytes().read(into).unwrap())
@@ -145,7 +147,7 @@ fn individual_request(request_object: &LlamaRequest) -> Result<String, String>
     return Ok(r.message.content);
 }
 
-fn make_request(model_name: String, prompt: String) -> Result<String, String>
+fn make_request(model_name: String, prompt: String, endpoint: &str) -> Result<String, String>
 {
     let mut req = LlamaRequest {
         model: model_name,
@@ -163,11 +165,11 @@ fn make_request(model_name: String, prompt: String) -> Result<String, String>
         ..Default::default()
     });
 
-    return individual_request(&req);
+    return individual_request(&req, endpoint);
 }
 
 /// Make multiple prompts to the destination model.
-fn request_loop(model_name: String)
+fn request_loop(model_name: String, endpoint: &str)
 {
     // Continuously update this object
     let mut req = LlamaRequest {
@@ -223,7 +225,7 @@ fn request_loop(model_name: String)
                     ..Default::default()
                 });
 
-                let resp = match individual_request(&req)
+                let resp = match individual_request(&req, endpoint)
                 {
                     Ok(m) => { m }
                     Err(err) => { eprintln!("{err}"); return }
@@ -247,7 +249,7 @@ fn main()
 
     if args.conv
     {
-        request_loop(args.model);
+        request_loop(args.model, &args.endpoint[..]);
     }
     else
     {
@@ -292,7 +294,7 @@ fn main()
             return;
         }
 
-        match make_request(args.model, prompt)
+        match make_request(args.model, prompt, &args.endpoint[..])
         {
             Ok(res) => { println!("{res}") }
             Err(err) => { eprintln!("Error received: {err}"); return }
