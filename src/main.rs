@@ -13,7 +13,7 @@ struct InputOptions
     prompt: bool,
     #[arg(short, long, conflicts_with = "file")]
     conv: bool,
-    #[arg(short, long, default_value = "wizard-vicuna-uncensored:7b", help = "Name of the model to query", value_name = "MODEL:TAG")]
+    #[arg(short, long, default_value = "llama2-uncensored:7b-chat", help = "Name of the model to query", value_name = "MODEL:TAG")]
     model: String
 }
 
