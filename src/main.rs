@@ -5,6 +5,7 @@ use curl::easy::Easy;
 use clap::Parser;
 
 #[derive(Parser)]
+#[command(version, about)]
 struct InputOptions
 {
     #[arg(short, long)]
