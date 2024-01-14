@@ -219,6 +219,30 @@ fn request_loop(model_name: String, endpoint: &str)
                 });
             }
             _ => {
+                if prompt.starts_with("\"\"\"")
+                {
+                    {
+                        let mut newstr = String::new();
+                        newstr.push_str(&prompt[3..]);
+                        prompt = newstr;
+                    }
+                    loop
+                    {
+                        let mut rl = String::new();
+                        std::io::stdin().read_line(&mut rl)
+                            .expect("Expected user input but could not use STDIN.");
+                        if rl.trim().ends_with("\"\"\"")
+                        {
+                            let rlen = rl.len();
+                            prompt.push_str(&rl[..rlen-4]);
+                            break;
+                        }
+                        else
+                        {
+                            prompt.push_str(&rl);
+                        }
+                    }
+                }
                 req.messages.push(Message {
                     role: "user".to_string(),
                     content: prompt,
