@@ -168,6 +168,17 @@ fn make_request(model_name: String, prompt: String, endpoint: &str) -> Result<St
     return individual_request(&req, endpoint);
 }
 
+fn print_conv_help()
+{
+    println!("Implemented commands are:
+  #exit ─── quit the conversation
+  #quit ─── alias for #exit
+  #reset ── reset the conversation
+  #system ─ reset the conversation and change the system message
+  #status ─ print the conversation history
+  #repeat ─ regenerate the last response from AI / repeat the last message");
+}
+
 /// Make multiple prompts to the destination model.
 fn request_loop(model_name: String, endpoint: &str)
 {
@@ -191,7 +202,9 @@ fn request_loop(model_name: String, endpoint: &str)
             .expect("Expected user input but could not use STDIN.");
 
         match prompt[..].trim() {
-            "#help" => { println!("Implemented commands are #exit / #quit, #system, #status, and #reset.") }
+            "#help" => {
+                print_conv_help();
+            }
             "#exit" => { break }
             "#quit" => { break }
             "#clear" => { print!("[H[J[3J"); std::io::stdout().flush().unwrap() }
@@ -203,11 +216,11 @@ fn request_loop(model_name: String, endpoint: &str)
             }
             "#reset" => {
                 req.messages = Vec::new();
-                println!("[33m⚠ Conversation history reset.[m");
+                println!("[33m✔ Conversation history reset.[m");
             }
             "#system" => {
                 req.messages = Vec::new();
-                println!("[33m⚠ Conversation history reset.[m");
+                println!("[33m✔ Conversation history reset.[m");
                 println!("Input the new system prompt.");
                 let mut new_system = String::new();
                 std::io::stdin().read_line(&mut new_system)
@@ -217,6 +230,27 @@ fn request_loop(model_name: String, endpoint: &str)
                     content: new_system.trim().to_string(),
                     ..Default::default()
                 });
+            }
+            "#repeat" => {
+                req.messages.pop();
+                if req.messages.len() > 0
+                {
+                    let resp = match individual_request(&req, endpoint)
+                    {
+                        Ok(m) => { m }
+                        Err(err) => { eprintln!("{err}"); return }
+                    };
+                    println!("{resp}");
+                    req.messages.push(Message {
+                        role: "assistant".to_string(),
+                        content: resp.trim().to_string(),
+                        ..Default::default()
+                    });
+                }
+                else
+                {
+                    println!("[33m⚠ No conversation history.[m");
+                }
             }
             _ => {
                 if prompt.starts_with("\"\"\"")
