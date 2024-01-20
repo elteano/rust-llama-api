@@ -112,8 +112,9 @@ fn individual_request(request_object: &LlamaRequest, endpoint: &str) -> Result<S
     {
         let mut transfer = curl_easy.transfer();
         transfer.write_function(|data| {
+            let cl = buf.len();
             buf.extend_from_slice(data);
-            Ok(buf.len())
+            Ok(buf.len() - cl)
         }).unwrap();
 
         match transfer.perform()
