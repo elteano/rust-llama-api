@@ -1,8 +1,13 @@
+use clap::Parser;
+use curl::easy::Easy;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{Read, Write};
-use curl::easy::Easy;
-use clap::Parser;
+use std::sync::mpsc::{channel, Sender, Receiver};
+use std::thread::scope;
+use std::time::Duration;
+
+const MOON_PHASES : [&str; 15] = [ "", "", "", "", "", "", "", "", "", "", "", "", "", "", "" ];
 
 #[derive(Parser)]
 #[command(version, about)]
@@ -76,7 +81,8 @@ struct LlamaResponse
 {
     model: String,
     created_at: String,
-    message: Message
+    message: Message,
+    done: bool,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -92,6 +98,14 @@ struct LlamaRequest
 struct ErrorResponse
 {
     error: String
+}
+
+struct ChannelMessage
+{
+    /// Whether to expect more coming down the pipe
+    done: bool,
+    /// The chunk of data coming with this message
+    chunk: String,
 }
 
 fn individual_request(request_object: &LlamaRequest, endpoint: &str) -> Result<String, String>
@@ -148,11 +162,68 @@ fn individual_request(request_object: &LlamaRequest, endpoint: &str) -> Result<S
     return Ok(r.message.content);
 }
 
-fn make_request(model_name: String, prompt: String, endpoint: &str) -> Result<String, String>
+fn individual_request_ch(request_object: &LlamaRequest, endpoint: String, sender: Sender<ChannelMessage>)
+{
+    let data = serde_json::to_string(&request_object).unwrap();
+
+    // Buffer to hold curl response data
+    let mut buf = Vec::new();
+
+    let mut curl_easy = Easy::new();
+    curl_easy.url(&endpoint).unwrap();
+
+    curl_easy.read_function(move |into| {
+        Ok(data.as_bytes().read(into).unwrap())
+    }).unwrap();
+    curl_easy.post(true).unwrap();
+
+    {
+        let mut transfer = curl_easy.transfer();
+        transfer.write_function(|data| {
+            let cl = buf.len();
+            match std::str::from_utf8(&data)
+            {
+                Ok(utf) => {
+                    match serde_json::from_str::<LlamaResponse>(utf)
+                    {
+                        Ok(resp) => {
+                            sender.send(ChannelMessage {
+                                done: resp.done,
+                                chunk: resp.message.content.to_string(),
+                            }).unwrap();
+                        }
+                        Err(_) => {
+                            sender.send(ChannelMessage {
+                                done: false,
+                                chunk: "☠".to_string()
+                            }).unwrap();
+                        }
+                    }
+                }
+                Err(_) => {
+                    sender.send(ChannelMessage {
+                        done: false,
+                        chunk: "".to_string(),
+                    }).unwrap();
+                }
+            }
+            buf.extend_from_slice(data);
+            Ok(buf.len() - cl)
+        }).unwrap();
+
+        match transfer.perform()
+        {
+            Ok(_) => { () }
+            Err(msg) => { eprintln!("{}", msg) }
+        };
+    }
+}
+
+fn make_request(model_name: String, prompt: String, endpoint: &str) -> Result<(), String>
 {
     let mut req = LlamaRequest {
         model: model_name,
-        stream: false,
+        stream: true,
         messages: Vec::new(),
         options: Some(ModelOptions {
             temperature: Some(0.8),
@@ -166,7 +237,35 @@ fn make_request(model_name: String, prompt: String, endpoint: &str) -> Result<St
         ..Default::default()
     });
 
-    return individual_request(&req, endpoint);
+    let (sender, receiver) = channel::<ChannelMessage>();
+    let mut full_message = String::new();
+    scope( |sc| 
+           {
+               let mut ep = String::new();
+               ep.push_str(endpoint);
+               let jh = sc.spawn(|| { individual_request_ch(&req, ep, sender) });
+
+               loop
+               {
+                   match receiver.try_recv()
+                   {
+                       Ok(val) => {
+                           print!("{}", val.chunk);
+                           std::io::stdout().flush().unwrap();
+                           full_message.push_str(&val.chunk);
+                           if val.done
+                           {
+                               break;
+                           }
+                       }
+                       Err(_) => { std::thread::sleep(Duration::from_millis(150)) }
+                   };
+               }
+               jh.join().unwrap();
+           });
+    println!("");
+
+    Ok(())
 }
 
 fn print_conv_help()
@@ -180,13 +279,50 @@ fn print_conv_help()
   #repeat ─ regenerate the last response from AI / repeat the last message");
 }
 
+fn request_single_message(req: &mut LlamaRequest, endpoint: &str)
+{
+    let (sender, receiver) = channel::<ChannelMessage>();
+    let mut full_message = String::new();
+    scope( |sc| 
+           {
+               let mut ep = String::new();
+               ep.push_str(endpoint);
+               let jh = sc.spawn(|| { individual_request_ch(&req, ep, sender) });
+
+               loop
+               {
+                   match receiver.try_recv()
+                   {
+                       Ok(val) => {
+                           print!("{}", val.chunk);
+                           std::io::stdout().flush().unwrap();
+                           full_message.push_str(&val.chunk);
+                           if val.done
+                           {
+                               break;
+                           }
+                       }
+                       Err(_) => { std::thread::sleep(Duration::from_millis(150)) }
+                   };
+               }
+               jh.join().unwrap();
+           });
+    println!("");
+
+    req.messages.push(Message {
+        role: "assistant".to_string(),
+        content: full_message.trim().to_string(),
+        ..Default::default()
+    });
+}
+
 /// Make multiple prompts to the destination model.
 fn request_loop(model_name: String, endpoint: &str)
 {
     // Continuously update this object
     let mut req = LlamaRequest {
         model: model_name,
-        stream: false,
+        stream: true,
         messages: Vec::new(),
         options: None
     };
@@ -215,6 +351,7 @@ fn request_loop(model_name: String, endpoint: &str)
                     println!("{}: {}", m.role, m.content);
                 }
             }
+
             "#reset" => {
                 req.messages = Vec::new();
                 println!("[33m✔ Conversation history reset.[m");
@@ -236,17 +373,7 @@ fn request_loop(model_name: String, endpoint: &str)
                 req.messages.pop();
                 if req.messages.len() > 0
                 {
-                    let resp = match individual_request(&req, endpoint)
-                    {
-                        Ok(m) => { m }
-                        Err(err) => { eprintln!("{err}"); return }
-                    };
-                    println!("{resp}");
-                    req.messages.push(Message {
-                        role: "assistant".to_string(),
-                        content: resp.trim().to_string(),
-                        ..Default::default()
-                    });
+                    request_single_message(&mut req, endpoint);
                 }
                 else
                 {
@@ -284,17 +411,7 @@ fn request_loop(model_name: String, endpoint: &str)
                     ..Default::default()
                 });
 
-                let resp = match individual_request(&req, endpoint)
-                {
-                    Ok(m) => { m }
-                    Err(err) => { eprintln!("{err}"); return }
-                };
-                println!("{resp}");
-                req.messages.push(Message {
-                    role: "assistant".to_string(),
-                    content: resp.trim().to_string(),
-                    ..Default::default()
-                });
+                request_single_message(&mut req, endpoint);
             }
         };
     }
@@ -305,6 +422,12 @@ fn main()
     let args = InputOptions::parse();
 
     let mut prompt = String::new();
+
+    // Depending on mode, perform certain actions
+    // No matter what, we continue to loop and perform our action...
+    // If we are in Conversation or Prompt mode, then our action is to read from stdin and send
+    // If we are in File mode, our action is to read from the file until its termination and send
+    // I should probably just remove Prompt mode
 
     if args.conv
     {
@@ -355,7 +478,7 @@ fn main()
 
         match make_request(args.model, prompt, &args.endpoint[..])
         {
-            Ok(res) => { println!("{res}") }
+            Ok(res) => { () }
             Err(err) => { eprintln!("Error received: {err}"); return }
         }
     }
