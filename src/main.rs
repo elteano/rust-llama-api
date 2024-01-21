@@ -7,7 +7,9 @@ use std::sync::mpsc::{channel, Sender, Receiver};
 use std::thread::scope;
 use std::time::Duration;
 
-const MOON_PHASES : [&str; 15] = [ "", "", "", "", "", "", "", "", "", "", "", "", "", "", "" ];
+//const MOON_PHASES : [&str; 15] = [ "", "", "", "", "", "", "", "", "", "", "", "", "", "", "" ];
+const MOON_PHASES: [&str; 8] = [ "🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘" ];
+const POLL_DURATION : Duration = Duration::from_millis(25);
 
 #[derive(Parser)]
 #[command(version, about)]
@@ -288,12 +290,18 @@ fn request_single_message(req: &mut LlamaRequest, endpoint: &str)
                let mut ep = String::new();
                ep.push_str(endpoint);
                let jh = sc.spawn(|| { individual_request_ch(&req, ep, sender) });
-
+               let mut first_receipt = false;
+               let mut moon_counter:usize = 0;
                loop
                {
                    match receiver.try_recv()
                    {
                        Ok(val) => {
+                           if !first_receipt
+                           {
+                               first_receipt = true;
+                               print!("   \r");
+                           }
                            print!("{}", val.chunk);
                            std::io::stdout().flush().unwrap();
                            full_message.push_str(&val.chunk);
@@ -302,7 +310,16 @@ fn request_single_message(req: &mut LlamaRequest, endpoint: &str)
                                break;
                            }
                        }
-                       Err(_) => { std::thread::sleep(Duration::from_millis(150)) }
+                       Err(_) => {
+                           if !first_receipt
+                           {
+                               print!("{}\r", MOON_PHASES[moon_counter]);
+                               std::io::stdout().flush().unwrap();
+                               moon_counter += 1;
+                               moon_counter = moon_counter % MOON_PHASES.len();
+                           }
+                           std::thread::sleep(POLL_DURATION)
+                       }
                    };
                }
                jh.join().unwrap();
